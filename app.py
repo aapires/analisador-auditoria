@@ -81,10 +81,16 @@ def colorir_risco(val):
 
 st.set_page_config(page_title="Analisador de Auditoria", page_icon="🔍", layout="wide")
 
-# Tema com cores da Câmara dos Deputados
+# Tema com cores da Câmara dos Deputados (fundos inspirados no verde da Câmara)
 st.markdown(
     """
     <style>
+        .stApp, [data-testid="stAppViewContainer"], section.main {
+            background-color: #D8E4E8 !important;
+        }
+        .block-container, [data-testid="stVerticalBlock"] > div {
+            background-color: #CCDCE0 !important;
+        }
         .stButton > button[kind="primary"] {
             background-color: #154453;
             border-color: #154453;
