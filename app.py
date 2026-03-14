@@ -16,6 +16,7 @@ RISCO: [Alto/Médio/Baixo]
 JUSTIFICATIVA: [uma frase]
 CONSEQUENCIAS: [uma frase]
 RECOMENDAÇÃO: [uma frase]
+RESPONSAVEL: [autoridade responsável a quem a recomendação seria direcionada, ex.: Diretor, Secretário, Gerente]
 
 Achado: {texto}"""}
         ]
@@ -32,7 +33,7 @@ def processar_planilha(df):
         analise = analisar_achado(row["achado"], row["area"])
 
         linhas = analise.strip().split("\n")
-        risco, justificativa, consequencias, recomendacao = "", "", "", ""
+        risco, justificativa, consequencias, recomendacao, responsavel = "", "", "", "", ""
         for linha in linhas:
             if linha.startswith("RISCO:"):
                 risco = linha.replace("RISCO:", "").strip()
@@ -42,6 +43,8 @@ def processar_planilha(df):
                 consequencias = linha.replace("CONSEQUENCIAS:", "").strip()
             elif linha.startswith("RECOMENDAÇÃO:"):
                 recomendacao = linha.replace("RECOMENDAÇÃO:", "").strip()
+            elif linha.startswith("RESPONSAVEL:"):
+                responsavel = linha.replace("RESPONSAVEL:", "").strip()
 
         resultados.append({
             "achado": row["achado"],
@@ -49,24 +52,58 @@ def processar_planilha(df):
             "risco": risco,
             "justificativa": justificativa,
             "consequencias": consequencias,
-            "recomendacao": recomendacao
+            "recomendacao": recomendacao,
+            "Responsavel": responsavel
         })
 
     barra.empty()
     df_resultado = pd.DataFrame(resultados)
 
     ordem = {"Alto": 1, "Médio": 2, "Baixo": 3}
-    df_resultado["prioridade"] = df_resultado["risco"].map(ordem).fillna(9).astype(int)
-    df_resultado = df_resultado.sort_values("prioridade").reset_index(drop=True)
+    df_resultado["__ordem_risco"] = df_resultado["risco"].map(ordem).fillna(9).astype(int)
+    df_resultado["__pos_original"] = range(len(df_resultado))
+    df_resultado = df_resultado.sort_values(["__ordem_risco", "__pos_original"]).reset_index(drop=True)
     df_resultado["prioridade"] = range(1, len(df_resultado) + 1)
+    df_resultado = df_resultado.drop(columns=["__ordem_risco", "__pos_original"])
 
     return df_resultado
 
+# Cores oficiais da Câmara dos Deputados (Manual de Identidade Visual)
+CORES_CAMARA = {
+    "verde_principal": "#154453",   # RGB 21-68-83
+    "verde_secundario": "#3C7A83",  # RGB 60-122-131
+    "verde_claro": "#A6CBD1",       # RGB 166-203-209
+}
+
 def colorir_risco(val):
-    cores = {"Alto": "#ffcccc", "Médio": "#fff3cc", "Baixo": "#ccffcc"}
-    return f"background-color: {cores.get(val, 'white')}"
+    # Alto = verde principal (mais escuro), Médio = secundário, Baixo = verde claro
+    estilos = {
+        "Alto": (CORES_CAMARA["verde_principal"], "white"),
+        "Médio": (CORES_CAMARA["verde_secundario"], "white"),
+        "Baixo": (CORES_CAMARA["verde_claro"], CORES_CAMARA["verde_principal"]),
+    }
+    bg, fg = estilos.get(val, ("white", "black"))
+    return f"background-color: {bg}; color: {fg}"
 
 st.set_page_config(page_title="Analisador de Auditoria", page_icon="🔍", layout="wide")
+
+# Tema com cores da Câmara dos Deputados
+st.markdown(
+    """
+    <style>
+        .stButton > button[kind="primary"] {
+            background-color: #154453;
+            border-color: #154453;
+        }
+        .stButton > button[kind="primary"]:hover {
+            background-color: #3C7A83;
+            border-color: #3C7A83;
+        }
+        h1, h2, h3 { color: #154453 !important; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 st.title("🔍 Analisador de Achados de Auditoria")
 st.markdown("Faça upload de uma planilha com colunas `achado` e `area` para análise automática via IA.")
 
