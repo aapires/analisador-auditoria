@@ -76,14 +76,8 @@ CORES_CAMARA = {
 }
 
 def colorir_risco(val):
-    # Alto = verde principal (mais escuro), Médio = secundário, Baixo = verde claro
-    estilos = {
-        "Alto": (CORES_CAMARA["verde_principal"], "white"),
-        "Médio": (CORES_CAMARA["verde_secundario"], "white"),
-        "Baixo": (CORES_CAMARA["verde_claro"], CORES_CAMARA["verde_principal"]),
-    }
-    bg, fg = estilos.get(val, ("white", "black"))
-    return f"background-color: {bg}; color: {fg}"
+    cores = {"Alto": "#ffcccc", "Médio": "#fff3cc", "Baixo": "#ccffcc"}
+    return f"background-color: {cores.get(val, 'white')}"
 
 st.set_page_config(page_title="Analisador de Auditoria", page_icon="🔍", layout="wide")
 
