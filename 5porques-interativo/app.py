@@ -10,13 +10,16 @@ Fluxo:
 """
 
 import copy
-import anthropic
+import os
+from google import genai
+from google.genai import types
 import streamlit as st
 from dotenv import load_dotenv
 
 load_dotenv()
 
-client = anthropic.Anthropic()
+client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+MODEL = "gemini-2.5-flash"
 
 # ── Estilo ────────────────────────────────────────────────────────────────────
 
@@ -124,13 +127,15 @@ P5_RESPOSTA: Porque [...]. — ou VAZIO
 CAUSA_RAIZ: [causa raiz identificada]
 RECOMENDACAO: [recomendação focada na causa raiz]"""
 
-    resp = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=2048,
-        system=SYSTEM_BASE,
-        messages=[{"role": "user", "content": prompt}],
+    resp = client.models.generate_content(
+        model=MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            system_instruction=SYSTEM_BASE,
+            max_output_tokens=2048,
+        ),
     )
-    texto = resp.content[0].text
+    texto = resp.text
     chain = []
     for n in range(1, 6):
         p, r = _parsear_passo(texto, n)
@@ -156,14 +161,16 @@ ALT_2: Porque [resposta 2].
 ALT_3: Porque [resposta 3].
 ALT_4: Porque [resposta 4]."""
 
-    resp = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=1024,
-        system=SYSTEM_BASE,
-        messages=[{"role": "user", "content": prompt}],
+    resp = client.models.generate_content(
+        model=MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            system_instruction=SYSTEM_BASE,
+            max_output_tokens=1024,
+        ),
     )
     alts = []
-    for linha in resp.content[0].text.splitlines():
+    for linha in resp.text.splitlines():
         l = linha.strip()
         for n in range(1, 5):
             if l.upper().startswith(f"ALT_{n}:"):
@@ -194,13 +201,15 @@ Continue a partir do passo {prox}. Use VAZIO nos passos restantes se a causa rai
 Responda SOMENTE neste formato:
 {chr(10).join(linhas_fmt)}"""
 
-    resp = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=2048,
-        system=SYSTEM_BASE,
-        messages=[{"role": "user", "content": prompt}],
+    resp = client.models.generate_content(
+        model=MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            system_instruction=SYSTEM_BASE,
+            max_output_tokens=2048,
+        ),
     )
-    texto = resp.content[0].text
+    texto = resp.text
     new_steps = []
     for n in range(prox, 6):
         p, r = _parsear_passo(texto, n)
