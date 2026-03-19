@@ -481,10 +481,7 @@ col_titulo, col_org = st.columns([8, 2])
 with col_titulo:
     st.title("🔎 5 Porquês Interativo")
 with col_org:
-    st.markdown(
-        "<div style='text-align:right; padding-top:18px; color:#154453; font-weight:bold;'>NUATI – SECIN</div>",
-        unsafe_allow_html=True,
-    )
+    pass
 
 st.caption("Ferramenta para auxílio da identificação da causa-raiz — versão para testes.")
 
