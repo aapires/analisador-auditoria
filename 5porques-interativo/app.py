@@ -12,6 +12,7 @@ Fluxo:
 
 import copy
 import os
+import re
 from google import genai
 from google.genai import types
 import streamlit as st
@@ -89,24 +90,33 @@ def _ctx(chain):
 def _parsear_passo(texto, n):
     p = r = ""
     for linha in texto.splitlines():
-        l = linha.strip()
-        if l.upper().startswith(f"P{n}_PERGUNTA:"):
+        l = _strip_md(linha)
+        lu = l.upper()
+        if lu.startswith(f"P{n}_PERGUNTA:"):
             v = l[len(f"P{n}_PERGUNTA:"):].strip()
             p = "" if v.upper().startswith("VAZIO") else v
-        elif l.upper().startswith(f"P{n}_RESPOSTA:"):
+        elif lu.startswith(f"P{n}_RESPOSTA:"):
             v = l[len(f"P{n}_RESPOSTA:"):].strip()
             r = "" if v.upper().startswith("VAZIO") else v
     return p, r
 
 
+def _strip_md(text):
+    """Remove marcadores markdown para não quebrar o parser."""
+    return text.replace("**", "").replace("*", "").strip()
+
+
 def _parsear_conclusao(texto):
     causa = rec = ""
     for linha in texto.splitlines():
-        l = linha.strip()
-        if l.upper().startswith("CAUSA_RAIZ:"):
+        l = _strip_md(linha)
+        lu = l.upper()
+        if lu.startswith("CAUSA_RAIZ:"):
             causa = l[len("CAUSA_RAIZ:"):].strip()
-        elif l.upper().startswith("RECOMENDACAO:"):
+        elif lu.startswith("RECOMENDACAO:"):
             rec = l[len("RECOMENDACAO:"):].strip()
+        elif lu.startswith("RECOMENDAÇÃO:"):
+            rec = l[len("RECOMENDAÇÃO:"):].strip()
     return causa, rec
 
 
@@ -165,7 +175,7 @@ RECOMENDACAO: [recomendação focada na causa raiz, dirigida à autoridade compe
         contents=prompt,
         config=types.GenerateContentConfig(
             system_instruction=SYSTEM_BASE,
-            max_output_tokens=512,
+            max_output_tokens=1024,
         ),
     )
     return _parsear_conclusao(resp.text)
@@ -201,10 +211,10 @@ ALT_3: Porque [resposta 3]."""
     )
     alts = []
     for linha in resp.text.splitlines():
-        l = linha.strip()
-        for n in range(1, 4):
-            if l.upper().startswith(f"ALT_{n}:"):
-                alts.append(l[len(f"ALT_{n}:"):].strip())
+        l = _strip_md(linha)
+        m = re.match(r"ALT_\d\s*:\s*(.+)", l, re.IGNORECASE)
+        if m:
+            alts.append(m.group(1).strip())
     return alts[:3]
 
 
