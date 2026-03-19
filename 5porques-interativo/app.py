@@ -3,10 +3,11 @@
 
 Fluxo:
   1. Usuário informa achado + área → gera cadeia completa.
-  2. Cada resposta tem botão de editar.
-  3. Editar: exibe 4 alternativas geradas pela IA + caixa para resposta própria.
-  4. Salvar: recalcula toda a cadeia a partir daquele ponto.
-  5. Desfazer: volta ao estado anterior.
+  2. Cada resposta tem 3 botões: Causa Raiz, Editar, Sugestões.
+  3. Causa Raiz: trunca a cadeia no passo atual e regera conclusão.
+  4. Editar: caixa de texto livre para digitar a resposta, recalcula cadeia.
+  5. Sugestões: exibe 3 alternativas geradas pela IA, com botão de atualizar.
+  6. Desfazer: volta ao estado anterior.
 """
 
 import copy
@@ -145,21 +146,50 @@ RECOMENDACAO: [recomendação focada na causa raiz]"""
     return chain, causa, rec
 
 
-def gerar_alternativas(achado, area, chain, idx):
+def gerar_conclusao(achado, area, chain):
+    """Gera causa raiz e recomendação para uma cadeia já definida."""
+    ctx = _ctx(chain)
+    prompt = f"""Área: {area}
+Achado: {achado}
+
+Cadeia dos Porquês confirmada:
+{ctx}
+
+O último passo representa a causa raiz identificada. Gere a conclusão.
+Responda SOMENTE neste formato:
+CAUSA_RAIZ: [causa raiz com base no último passo da cadeia]
+RECOMENDACAO: [recomendação focada na causa raiz, dirigida à autoridade competente]"""
+
+    resp = client.models.generate_content(
+        model=MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            system_instruction=SYSTEM_BASE,
+            max_output_tokens=512,
+        ),
+    )
+    return _parsear_conclusao(resp.text)
+
+
+def gerar_alternativas(achado, area, chain, idx, excluir=None):
     pergunta = chain[idx]["pergunta"]
     ctx = _ctx(chain[:idx])
+    excluir_txt = ""
+    if excluir:
+        excluir_txt = "\n\nNÃO repita estas respostas já apresentadas:\n" + "\n".join(
+            f"- {a}" for a in excluir
+        )
     prompt = f"""Área: {area}
 Achado: {achado}
 {"Cadeia confirmada:\n" + ctx if ctx else ""}
 
 Pergunta atual: {pergunta}
 
-Gere 4 respostas alternativas plausíveis, cada uma representando uma causa diferente.
+Gere 3 respostas alternativas plausíveis, cada uma representando uma causa diferente.{excluir_txt}
 Responda SOMENTE neste formato:
 ALT_1: Porque [resposta 1].
 ALT_2: Porque [resposta 2].
-ALT_3: Porque [resposta 3].
-ALT_4: Porque [resposta 4]."""
+ALT_3: Porque [resposta 3]."""
 
     resp = client.models.generate_content(
         model=MODEL,
@@ -172,10 +202,10 @@ ALT_4: Porque [resposta 4]."""
     alts = []
     for linha in resp.text.splitlines():
         l = linha.strip()
-        for n in range(1, 5):
+        for n in range(1, 4):
             if l.upper().startswith(f"ALT_{n}:"):
                 alts.append(l[len(f"ALT_{n}:"):].strip())
-    return alts[:4]
+    return alts[:3]
 
 
 def regenerar_a_partir_de(achado, area, chain_confirmada):
@@ -230,6 +260,7 @@ def _init():
         "causa_raiz": "",
         "recomendacao": "",
         "editing_index": None,
+        "editing_mode": None,   # "edit" | "suggestions"
         "alternatives": None,
         "history": [],
     }
@@ -240,9 +271,23 @@ def _init():
 
 def _reset():
     for k in ["phase", "achado", "area", "chain", "causa_raiz", "recomendacao",
-              "editing_index", "alternatives", "history"]:
+              "editing_index", "editing_mode", "alternatives", "history"]:
         if k in st.session_state:
             del st.session_state[k]
+
+
+def _cancelar_edicao(s):
+    s.editing_index = None
+    s.editing_mode = None
+    s.alternatives = None
+
+
+def _salvar_historico(s):
+    s.history.append({
+        "chain": copy.deepcopy(s.chain),
+        "causa_raiz": s.causa_raiz,
+        "recomendacao": s.recomendacao,
+    })
 
 
 # ── Telas ─────────────────────────────────────────────────────────────────────
@@ -264,6 +309,7 @@ def tela_input():
                 "causa_raiz": causa,
                 "recomendacao": rec,
                 "editing_index": None,
+                "editing_mode": None,
                 "alternatives": None,
                 "history": [],
             })
@@ -286,8 +332,7 @@ def tela_resultados():
                 s.chain = prev["chain"]
                 s.causa_raiz = prev["causa_raiz"]
                 s.recomendacao = prev["recomendacao"]
-                s.editing_index = None
-                s.alternatives = None
+                _cancelar_edicao(s)
                 st.rerun()
     with col_new:
         if st.button("Nova análise", use_container_width=True):
@@ -298,12 +343,44 @@ def tela_resultados():
 
     # ── Cadeia de porquês ──
     for i, step in enumerate(s.chain):
-        is_editing = s.editing_index == i
+        editing_this = s.editing_index == i
 
-        if is_editing:
-            # Gera alternativas se ainda não foram geradas
+        if editing_this and s.editing_mode == "edit":
+            # ── Modo: editar texto livre ──
+            st.markdown(
+                f'<div class="step-card-editing"><strong>{i+1}. {step["pergunta"]}</strong></div>',
+                unsafe_allow_html=True,
+            )
+            nova_resp = st.text_area(
+                "Sua resposta:",
+                value=step["resposta"],
+                key=f"custom_{i}",
+                height=80,
+            )
+            col_salvar, col_cancelar, _ = st.columns([1, 1, 6])
+            with col_salvar:
+                if st.button("Salvar", type="primary", key=f"save_edit_{i}"):
+                    nova = nova_resp.strip()
+                    if nova:
+                        _salvar_historico(s)
+                        s.chain[i]["resposta"] = nova
+                        with st.spinner("Recalculando cadeia..."):
+                            s.chain, s.causa_raiz, s.recomendacao = regenerar_a_partir_de(
+                                s.achado, s.area, s.chain[:i + 1]
+                            )
+                        _cancelar_edicao(s)
+                        st.rerun()
+                    else:
+                        st.warning("A resposta não pode estar vazia.")
+            with col_cancelar:
+                if st.button("Cancelar", key=f"cancel_edit_{i}"):
+                    _cancelar_edicao(s)
+                    st.rerun()
+
+        elif editing_this and s.editing_mode == "suggestions":
+            # ── Modo: sugestões da IA ──
             if s.alternatives is None:
-                with st.spinner("Gerando alternativas..."):
+                with st.spinner("Gerando sugestões..."):
                     s.alternatives = gerar_alternativas(s.achado, s.area, s.chain, i)
                 st.rerun()
 
@@ -311,51 +388,37 @@ def tela_resultados():
                 f'<div class="step-card-editing"><strong>{i+1}. {step["pergunta"]}</strong></div>',
                 unsafe_allow_html=True,
             )
-
-            opts = s.alternatives + ["✍️ Digitar minha própria resposta"]
             choice = st.radio(
-                "Selecione uma alternativa:",
-                opts,
+                "Selecione uma sugestão:",
+                s.alternatives,
                 key=f"radio_{i}",
             )
-
-            custom_val = ""
-            if choice == opts[-1]:
-                custom_val = st.text_area(
-                    "Sua resposta:",
-                    value=step["resposta"],
-                    key=f"custom_{i}",
-                    height=80,
-                )
-
-            col_salvar, col_cancelar, _ = st.columns([1, 1, 6])
+            col_salvar, col_atualizar, col_cancelar, _ = st.columns([1, 2, 1, 4])
             with col_salvar:
-                if st.button("Salvar", type="primary", key=f"save_{i}"):
-                    nova = custom_val.strip() if choice == opts[-1] else choice
-                    if nova:
-                        s.history.append({
-                            "chain": copy.deepcopy(s.chain),
-                            "causa_raiz": s.causa_raiz,
-                            "recomendacao": s.recomendacao,
-                        })
-                        s.chain[i]["resposta"] = nova
-                        with st.spinner("Recalculando cadeia..."):
-                            s.chain, s.causa_raiz, s.recomendacao = regenerar_a_partir_de(
-                                s.achado, s.area, s.chain[:i + 1]
-                            )
-                        s.editing_index = None
-                        s.alternatives = None
-                        st.rerun()
-                    else:
-                        st.warning("A resposta não pode estar vazia.")
+                if st.button("Salvar", type="primary", key=f"save_sug_{i}"):
+                    _salvar_historico(s)
+                    s.chain[i]["resposta"] = choice
+                    with st.spinner("Recalculando cadeia..."):
+                        s.chain, s.causa_raiz, s.recomendacao = regenerar_a_partir_de(
+                            s.achado, s.area, s.chain[:i + 1]
+                        )
+                    _cancelar_edicao(s)
+                    st.rerun()
+            with col_atualizar:
+                if st.button("🔄 Atualizar sugestões", key=f"refresh_{i}"):
+                    with st.spinner("Gerando novas sugestões..."):
+                        s.alternatives = gerar_alternativas(
+                            s.achado, s.area, s.chain, i, excluir=s.alternatives
+                        )
+                    st.rerun()
             with col_cancelar:
-                if st.button("Cancelar", key=f"cancel_{i}"):
-                    s.editing_index = None
-                    s.alternatives = None
+                if st.button("Cancelar", key=f"cancel_sug_{i}"):
+                    _cancelar_edicao(s)
                     st.rerun()
 
         else:
-            col_step, col_btn = st.columns([11, 1])
+            # ── Estado normal: exibe card + 3 botões ──
+            col_step, col_cr, col_ed, col_sg = st.columns([9, 1, 1, 1])
             with col_step:
                 st.markdown(
                     f'<div class="step-card">'
@@ -364,11 +427,26 @@ def tela_resultados():
                     f'</div>',
                     unsafe_allow_html=True,
                 )
-            with col_btn:
-                # Só mostra o botão editar se nenhum outro passo está sendo editado
-                if s.editing_index is None:
-                    if st.button("✏️", key=f"edit_{i}", help="Editar esta resposta"):
+            if s.editing_index is None:
+                with col_cr:
+                    if st.button("🎯", key=f"cr_{i}", help="Marcar como causa raiz — encerra a cadeia aqui"):
+                        _salvar_historico(s)
+                        nova_chain = s.chain[:i + 1]
+                        with st.spinner("Gerando conclusão..."):
+                            causa, rec = gerar_conclusao(s.achado, s.area, nova_chain)
+                        s.chain = nova_chain
+                        s.causa_raiz = causa
+                        s.recomendacao = rec
+                        st.rerun()
+                with col_ed:
+                    if st.button("✏️", key=f"edit_{i}", help="Editar resposta manualmente"):
                         s.editing_index = i
+                        s.editing_mode = "edit"
+                        st.rerun()
+                with col_sg:
+                    if st.button("💡", key=f"sug_{i}", help="Ver sugestões da IA"):
+                        s.editing_index = i
+                        s.editing_mode = "suggestions"
                         s.alternatives = None
                         st.rerun()
 
