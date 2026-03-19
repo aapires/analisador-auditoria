@@ -212,7 +212,7 @@ ALT_3: Porque [resposta 3]."""
     alts = []
     for linha in resp.text.splitlines():
         l = _strip_md(linha)
-        m = re.match(r"ALT_\d\s*:\s*(.+)", l, re.IGNORECASE)
+        m = re.search(r"ALT_\d\s*:\s*(.+)", l, re.IGNORECASE)
         if m:
             alts.append(m.group(1).strip())
     return alts[:3]
