@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
-MODEL = "gemini-2.5-flash"
+MODEL = "gemini-2.0-flash"
 
 # ── Estilo ────────────────────────────────────────────────────────────────────
 
@@ -328,7 +328,14 @@ def tela_input():
             st.warning("Preencha o achado e a área.")
         else:
             with st.spinner("Gerando análise dos 5 Porquês..."):
-                chain, causa, rec = gerar_cadeia_completa(achado.strip(), area.strip())
+                try:
+                    chain, causa, rec = gerar_cadeia_completa(achado.strip(), area.strip())
+                except Exception as e:
+                    if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                        st.error("Limite de requisições atingido. Aguarde alguns minutos e tente novamente.")
+                    else:
+                        st.error(f"Erro ao gerar análise: {e}")
+                    st.stop()
             st.session_state.update({
                 "phase": "results",
                 "achado": achado.strip(),
@@ -391,9 +398,16 @@ def tela_resultados():
                         _salvar_historico(s)
                         s.chain[i]["resposta"] = nova
                         with st.spinner("Recalculando cadeia..."):
-                            s.chain, s.causa_raiz, s.recomendacao = regenerar_a_partir_de(
-                                s.achado, s.area, s.chain[:i + 1]
-                            )
+                            try:
+                                s.chain, s.causa_raiz, s.recomendacao = regenerar_a_partir_de(
+                                    s.achado, s.area, s.chain[:i + 1]
+                                )
+                            except Exception as e:
+                                if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                                    st.error("Limite de requisições atingido. Aguarde alguns minutos e tente novamente.")
+                                else:
+                                    st.error(f"Erro ao recalcular cadeia: {e}")
+                                st.stop()
                         _cancelar_edicao(s)
                         st.rerun()
                     else:
@@ -407,7 +421,15 @@ def tela_resultados():
             # ── Modo: sugestões da IA ──
             if s.alternatives is None:
                 with st.spinner("Gerando sugestões..."):
-                    s.alternatives = gerar_alternativas(s.achado, s.area, s.chain, i)
+                    try:
+                        s.alternatives = gerar_alternativas(s.achado, s.area, s.chain, i)
+                    except Exception as e:
+                        if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                            st.error("Limite de requisições atingido. Aguarde alguns minutos e tente novamente.")
+                        else:
+                            st.error(f"Erro ao gerar sugestões: {e}")
+                        _cancelar_edicao(s)
+                        st.stop()
                 st.rerun()
 
             st.markdown(
@@ -425,17 +447,31 @@ def tela_resultados():
                     _salvar_historico(s)
                     s.chain[i]["resposta"] = choice
                     with st.spinner("Recalculando cadeia..."):
-                        s.chain, s.causa_raiz, s.recomendacao = regenerar_a_partir_de(
-                            s.achado, s.area, s.chain[:i + 1]
-                        )
+                        try:
+                            s.chain, s.causa_raiz, s.recomendacao = regenerar_a_partir_de(
+                                s.achado, s.area, s.chain[:i + 1]
+                            )
+                        except Exception as e:
+                            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                                st.error("Limite de requisições atingido. Aguarde alguns minutos e tente novamente.")
+                            else:
+                                st.error(f"Erro ao recalcular cadeia: {e}")
+                            st.stop()
                     _cancelar_edicao(s)
                     st.rerun()
             with col_atualizar:
                 if st.button("🔄 Atualizar sugestões", key=f"refresh_{i}"):
                     with st.spinner("Gerando novas sugestões..."):
-                        s.alternatives = gerar_alternativas(
-                            s.achado, s.area, s.chain, i, excluir=s.alternatives
-                        )
+                        try:
+                            s.alternatives = gerar_alternativas(
+                                s.achado, s.area, s.chain, i, excluir=s.alternatives
+                            )
+                        except Exception as e:
+                            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                                st.error("Limite de requisições atingido. Aguarde alguns minutos e tente novamente.")
+                            else:
+                                st.error(f"Erro ao gerar sugestões: {e}")
+                            st.stop()
                     st.rerun()
             with col_cancelar:
                 if st.button("Cancelar", key=f"cancel_sug_{i}"):
@@ -459,7 +495,14 @@ def tela_resultados():
                         _salvar_historico(s)
                         nova_chain = s.chain[:i + 1]
                         with st.spinner("Gerando conclusão..."):
-                            causa, rec = gerar_conclusao(s.achado, s.area, nova_chain)
+                            try:
+                                causa, rec = gerar_conclusao(s.achado, s.area, nova_chain)
+                            except Exception as e:
+                                if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                                    st.error("Limite de requisições atingido. Aguarde alguns minutos e tente novamente.")
+                                else:
+                                    st.error(f"Erro ao gerar conclusão: {e}")
+                                st.stop()
                         s.chain = nova_chain
                         s.causa_raiz = causa
                         s.recomendacao = rec
