@@ -311,9 +311,14 @@ def tela_input():
     st.markdown("Informe o achado de auditoria e a área para iniciar a análise.")
     achado = st.text_area("Achado de auditoria:", height=120, key="inp_achado")
     area = st.text_input("Área:", key="inp_area")
+    declaracao = st.checkbox("Declaro que esse achado não inclui dados com restrição de acesso.")
 
     if st.button("Analisar", type="primary"):
-        if achado.strip() and area.strip():
+        if not declaracao:
+            st.warning("É necessário confirmar a declaração antes de iniciar a análise.")
+        elif not achado.strip() or not area.strip():
+            st.warning("Preencha o achado e a área.")
+        else:
             with st.spinner("Gerando análise dos 5 Porquês..."):
                 chain, causa, rec = gerar_cadeia_completa(achado.strip(), area.strip())
             st.session_state.update({
@@ -329,8 +334,6 @@ def tela_input():
                 "history": [],
             })
             st.rerun()
-        else:
-            st.warning("Preencha o achado e a área.")
 
 
 def tela_resultados():
