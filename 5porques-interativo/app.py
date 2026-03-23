@@ -200,8 +200,9 @@ Achado: {achado}
 
 Pergunta atual: {pergunta}
 
-Gere 3 respostas alternativas plausíveis, cada uma representando uma causa diferente.{excluir_txt}
-Responda SOMENTE neste formato:
+Gere EXATAMENTE 3 respostas alternativas plausíveis, cada uma representando uma causa diferente.
+Cada resposta deve ser completa e não pode ser cortada.{excluir_txt}
+Responda SOMENTE neste formato, sem texto adicional:
 ALT_1: Porque [resposta 1].
 ALT_2: Porque [resposta 2].
 ALT_3: Porque [resposta 3]."""
@@ -211,15 +212,22 @@ ALT_3: Porque [resposta 3]."""
         contents=prompt,
         config=types.GenerateContentConfig(
             system_instruction=SYSTEM_BASE,
-            max_output_tokens=1024,
+            max_output_tokens=4096,
         ),
     )
     alts = []
+    bloco = ""
     for linha in resp.text.splitlines():
         l = _strip_md(linha)
-        m = re.search(r"ALT_\d\s*:\s*(.+)", l, re.IGNORECASE)
+        m = re.match(r"ALT_\d\s*:\s*(.+)", l, re.IGNORECASE)
         if m:
-            alts.append(m.group(1).strip())
+            if bloco:
+                alts.append(bloco.strip())
+            bloco = m.group(1).strip()
+        elif bloco and l:
+            bloco += " " + l
+    if bloco:
+        alts.append(bloco.strip())
     return alts[:3]
 
 
