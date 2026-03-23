@@ -12,29 +12,46 @@ client = anthropic.Anthropic()
 # Lógica de negócio
 # ---------------------------------------------------------------------------
 
-SYSTEM = """\
+_SYSTEM_BASE = """\
 Você é um auditor interno sênior especialista em análise de causa raiz.
 Sua tarefa é aplicar a técnica dos 5 Porquês a achados de auditoria.
+{instrucao_cadeia}
 
-Regras da técnica:
+Critério fundamental da causa raiz:
+- A causa raiz DEVE ser uma falha estrutural em política, processo, sistema, competência ou cultura organizacional.
+- Ela precisa ter poder de sanar não apenas o achado analisado, mas outros achados similares — caso fosse corrigida.
+- Nunca identifique como causa raiz um sintoma, um evento pontual ou uma falha individual isolada.
+- Pergunte-se: "Se corrigirmos isso, impediremos que problemas similares ocorram sistematicamente?" — só então é causa raiz.
+
+Regras da cadeia de porquês:
 - Parta do achado e pergunte "Por quê isso ocorre?" sucessivamente.
 - Cada resposta torna-se o insumo da pergunta seguinte.
-- Pare assim que chegar à causa raiz — pode ser antes do 5º passo.
-- Deixe os campos POR_QUE_N com o valor literal VAZIO a partir do passo em que a causa raiz já foi identificada.
-- A causa raiz é geralmente uma falha de processo, controle, gestão ou decisão — não um sintoma.
-- A recomendação deve atacar diretamente a causa raiz, não o sintoma inicial.
+- A recomendação deve atacar diretamente a causa raiz estrutural, não o sintoma inicial.
 
-Para cada POR_QUE_N ativo, forneça a pergunta e a resposta separadas por " || " (espaço, duas barras, espaço):
+Para cada POR_QUE_N ativo, forneça a pergunta e a resposta separadas por " || ":
   POR_QUE_1: Por quê [pergunta derivada do achado]? || Porque [resposta que leva ao próximo porquê].
 
 Responda SOMENTE no formato abaixo, sem texto adicional:
 POR_QUE_1: Por quê [pergunta]? || Porque [resposta].
-POR_QUE_2: Por quê [pergunta baseada na resposta anterior]? || Porque [resposta]. — ou VAZIO
-POR_QUE_3: Por quê [pergunta]? || Porque [resposta]. — ou VAZIO
-POR_QUE_4: Por quê [pergunta]? || Porque [resposta]. — ou VAZIO
-POR_QUE_5: Por quê [pergunta]? || Porque [resposta]. — ou VAZIO
-CAUSA_RAIZ: [descrição objetiva da causa raiz identificada]
-RECOMENDACAO: [recomendação focada em eliminar a causa raiz, dirigida à autoridade competente]"""
+POR_QUE_2: Por quê [pergunta baseada na resposta anterior]? || Porque [resposta].{vazio_hint}
+POR_QUE_3: Por quê [pergunta]? || Porque [resposta].{vazio_hint}
+POR_QUE_4: Por quê [pergunta]? || Porque [resposta].{vazio_hint}
+POR_QUE_5: Por quê [pergunta]? || Porque [resposta].{vazio_hint}
+CAUSA_RAIZ: [descrição objetiva da falha estrutural identificada como causa raiz]
+RECOMENDACAO: [recomendação dirigida à autoridade competente para eliminar a causa raiz estrutural]"""
+
+_INSTRUCAO_PRIMEIRA = (
+    "REGRA OBRIGATÓRIA: Você DEVE preencher os 5 porquês completos (POR_QUE_1 até POR_QUE_5). "
+    "Nenhum campo pode conter VAZIO. Aprofunde cada resposta até atingir o 5º nível."
+)
+
+_INSTRUCAO_REFINAMENTO = (
+    "Você pode encerrar a cadeia antes do 5º porquê se a causa raiz estrutural já tiver sido "
+    "atingida com clareza. Deixe os campos restantes com o valor literal VAZIO."
+)
+
+SYSTEM_PRIMEIRA = _SYSTEM_BASE.format(instrucao_cadeia=_INSTRUCAO_PRIMEIRA, vazio_hint="")
+SYSTEM_REFINAMENTO = _SYSTEM_BASE.format(instrucao_cadeia=_INSTRUCAO_REFINAMENTO, vazio_hint=" — ou VAZIO")
 
 
 def _parsear_resposta(texto: str) -> dict:
@@ -61,11 +78,12 @@ def _parsear_resposta(texto: str) -> dict:
     return campos
 
 
-def aplicar_5porques(achado: str, area: str) -> dict:
+def aplicar_5porques(achado: str, area: str, primeira_analise: bool = True) -> dict:
+    system = SYSTEM_PRIMEIRA if primeira_analise else SYSTEM_REFINAMENTO
     resposta = client.messages.create(
         model="claude-haiku-4-5-20251001",
-        max_tokens=1024,
-        system=SYSTEM,
+        max_tokens=2048,
+        system=system,
         messages=[{"role": "user", "content": f"Área de auditoria: {area}\nAchado: {achado}"}],
     )
     return _parsear_resposta(resposta.content[0].text)

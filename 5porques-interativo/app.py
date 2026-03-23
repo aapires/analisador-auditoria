@@ -74,10 +74,12 @@ CSS = """
 SYSTEM_BASE = """\
 Você é um auditor interno sênior especialista em análise de causa raiz pela técnica dos 5 Porquês.
 
-Regras:
-- A causa raiz é geralmente uma falha de processo, controle, gestão ou decisão — não um sintoma.
-- A recomendação deve atacar diretamente a causa raiz, dirigida à autoridade competente.
-- Pare antes do 5º passo se a causa raiz já for identificada; use VAZIO nos passos restantes."""
+Critério fundamental da causa raiz:
+- A causa raiz DEVE ser uma falha estrutural em política, processo, sistema, competência ou cultura organizacional.
+- Ela precisa ter poder de sanar não apenas o achado analisado, mas outros achados similares — caso fosse corrigida.
+- Nunca identifique como causa raiz um sintoma, um evento pontual ou uma falha individual isolada.
+- Pergunte-se: "Se corrigirmos isso, impediremos que problemas similares ocorram sistematicamente?" — só então é causa raiz.
+- A recomendação deve atacar diretamente a causa raiz estrutural, dirigida à autoridade competente."""
 
 
 def _ctx(chain):
@@ -124,26 +126,29 @@ def gerar_cadeia_completa(achado, area):
     prompt = f"""Área: {area}
 Achado: {achado}
 
-Aplique a técnica dos 5 Porquês. Responda SOMENTE neste formato, sem texto adicional:
+REGRA OBRIGATÓRIA: Preencha todos os 5 porquês completos (P1 até P5). Nenhum campo pode conter VAZIO.
+Aprofunde cada resposta até atingir o 5º nível, chegando a uma falha estrutural na causa raiz.
+
+Responda SOMENTE neste formato, sem texto adicional:
 P1_PERGUNTA: Por quê [pergunta derivada do achado]?
 P1_RESPOSTA: Porque [resposta].
 P2_PERGUNTA: Por quê [pergunta baseada em P1_RESPOSTA]?
 P2_RESPOSTA: Porque [resposta].
 P3_PERGUNTA: Por quê [pergunta baseada em P2_RESPOSTA]?
 P3_RESPOSTA: Porque [resposta].
-P4_PERGUNTA: Por quê [...]? — ou VAZIO se causa raiz já identificada
-P4_RESPOSTA: Porque [...]. — ou VAZIO
-P5_PERGUNTA: Por quê [...]? — ou VAZIO
-P5_RESPOSTA: Porque [...]. — ou VAZIO
-CAUSA_RAIZ: [causa raiz identificada]
-RECOMENDACAO: [recomendação focada na causa raiz]"""
+P4_PERGUNTA: Por quê [pergunta baseada em P3_RESPOSTA]?
+P4_RESPOSTA: Porque [resposta].
+P5_PERGUNTA: Por quê [pergunta baseada em P4_RESPOSTA]?
+P5_RESPOSTA: Porque [resposta — esta é a falha estrutural que é a causa raiz].
+CAUSA_RAIZ: [descrição objetiva da falha estrutural identificada]
+RECOMENDACAO: [recomendação focada em eliminar a causa raiz estrutural]"""
 
     resp = client.models.generate_content(
         model=MODEL,
         contents=prompt,
         config=types.GenerateContentConfig(
             system_instruction=SYSTEM_BASE,
-            max_output_tokens=2048,
+            max_output_tokens=8192,
         ),
     )
     texto = resp.text
