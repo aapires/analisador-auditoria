@@ -180,7 +180,7 @@ RECOMENDACAO: [recomendação focada na causa raiz, dirigida à autoridade compe
         contents=prompt,
         config=types.GenerateContentConfig(
             system_instruction=SYSTEM_BASE,
-            max_output_tokens=1024,
+            max_output_tokens=4096,
         ),
     )
     return _parsear_conclusao(resp.text)
@@ -259,7 +259,7 @@ Responda SOMENTE neste formato:
         contents=prompt,
         config=types.GenerateContentConfig(
             system_instruction=SYSTEM_BASE,
-            max_output_tokens=2048,
+            max_output_tokens=8192,
         ),
     )
     texto = resp.text
