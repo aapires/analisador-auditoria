@@ -151,9 +151,8 @@ def _parsear_conclusao(texto):
     return causa, rec
 
 
-def gerar_cadeia_completa(achado, area, provider):
-    prompt = f"""Área: {area}
-Achado: {achado}
+def gerar_cadeia_completa(achado, provider):
+    prompt = f"""Achado: {achado}
 
 REGRA OBRIGATÓRIA: Preencha todos os 5 porquês completos (P1 até P5). Nenhum campo pode conter VAZIO.
 Aprofunde cada resposta até atingir o 5º nível, chegando a uma falha estrutural na causa raiz.
@@ -182,11 +181,10 @@ RECOMENDACAO: [recomendação focada em eliminar a causa raiz estrutural]"""
     return chain, causa, rec
 
 
-def gerar_conclusao(achado, area, chain, provider):
+def gerar_conclusao(achado, chain, provider):
     """Gera causa raiz e recomendação para uma cadeia já definida."""
     ctx = _ctx(chain)
-    prompt = f"""Área: {area}
-Achado: {achado}
+    prompt = f"""Achado: {achado}
 
 Cadeia dos Porquês confirmada:
 {ctx}
@@ -199,7 +197,7 @@ RECOMENDACAO: [recomendação focada na causa raiz, dirigida à autoridade compe
     return _parsear_conclusao(_chamar_modelo(provider, SYSTEM_BASE, prompt, 4096))
 
 
-def gerar_alternativas(achado, area, chain, idx, provider, excluir=None):
+def gerar_alternativas(achado, chain, idx, provider, excluir=None):
     pergunta = chain[idx]["pergunta"]
     ctx = _ctx(chain[:idx])
     excluir_txt = ""
@@ -207,8 +205,7 @@ def gerar_alternativas(achado, area, chain, idx, provider, excluir=None):
         excluir_txt = "\n\nNÃO repita estas respostas já apresentadas:\n" + "\n".join(
             f"- {a}" for a in excluir
         )
-    prompt = f"""Área: {area}
-Achado: {achado}
+    prompt = f"""Achado: {achado}
 {"Cadeia confirmada:\n" + ctx if ctx else ""}
 
 Pergunta atual: {pergunta}
@@ -236,7 +233,7 @@ ALT_3: Porque [resposta 3]."""
     return alts[:3]
 
 
-def regenerar_a_partir_de(achado, area, chain_confirmada, provider):
+def regenerar_a_partir_de(achado, chain_confirmada, provider):
     """Recebe a cadeia confirmada (0..N com nova resposta em N) e regenera N+1..fim."""
     prox = len(chain_confirmada) + 1
     ctx = _ctx(chain_confirmada)
@@ -249,8 +246,7 @@ def regenerar_a_partir_de(achado, area, chain_confirmada, provider):
         ]
     linhas_fmt += ["CAUSA_RAIZ: [...]", "RECOMENDACAO: [...]"]
 
-    prompt = f"""Área: {area}
-Achado: {achado}
+    prompt = f"""Achado: {achado}
 
 Cadeia já confirmada:
 {ctx}
@@ -275,7 +271,6 @@ def _init():
     defaults = {
         "phase": "input",
         "achado": "",
-        "area": "",
         "chain": [],
         "causa_raiz": "",
         "recomendacao": "",
@@ -291,7 +286,7 @@ def _init():
 
 
 def _reset():
-    for k in ["phase", "achado", "area", "chain", "causa_raiz", "recomendacao",
+    for k in ["phase", "achado", "chain", "causa_raiz", "recomendacao",
               "editing_index", "editing_mode", "alternatives", "history"]:
         if k in st.session_state:
             del st.session_state[k]
@@ -314,28 +309,34 @@ def _salvar_historico(s):
 # ── Telas ─────────────────────────────────────────────────────────────────────
 
 def tela_input():
-    st.markdown("Informe o achado de auditoria e a área para iniciar a análise.")
-    achado = st.text_area("Achado de auditoria:", height=120, key="inp_achado")
-    area = st.text_input("Área:", key="inp_area")
-
-    modelo_label = st.selectbox(
-        "Modelo de IA:",
-        list(MODELOS.keys()),
-        index=0,
+    st.markdown("### Descreva o achado de auditoria")
+    achado = st.text_area(
+        "Achado:",
+        height=160,
+        key="inp_achado",
+        placeholder="Descreva o achado com o máximo de contexto possível...",
+        label_visibility="collapsed",
     )
-    provider = MODELOS[modelo_label]
 
     declaracao = st.checkbox("Declaro que esse achado não inclui dados com restrição de acesso.")
 
-    if st.button("Analisar", type="primary"):
+    with st.expander("⚙️ Configurações"):
+        modelo_label = st.selectbox(
+            "Modelo de IA:",
+            list(MODELOS.keys()),
+            index=0,
+        )
+    provider = MODELOS[modelo_label]
+
+    if st.button("Iniciar análise", type="primary"):
         if not declaracao:
             st.warning("É necessário confirmar a declaração antes de iniciar a análise.")
-        elif not achado.strip() or not area.strip():
-            st.warning("Preencha o achado e a área.")
+        elif not achado.strip():
+            st.warning("Descreva o achado antes de continuar.")
         else:
             with st.spinner("Gerando análise dos 5 Porquês..."):
                 try:
-                    chain, causa, rec = gerar_cadeia_completa(achado.strip(), area.strip(), provider)
+                    chain, causa, rec = gerar_cadeia_completa(achado.strip(), provider)
                 except Exception as e:
                     if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
                         st.error("Limite de requisições atingido. Aguarde alguns minutos e tente novamente.")
@@ -345,7 +346,6 @@ def tela_input():
             st.session_state.update({
                 "phase": "results",
                 "achado": achado.strip(),
-                "area": area.strip(),
                 "chain": chain,
                 "causa_raiz": causa,
                 "recomendacao": rec,
@@ -364,7 +364,7 @@ def tela_resultados():
     # ── Cabeçalho ──
     col_info, col_undo, col_new = st.columns([7, 1.5, 1.5])
     with col_info:
-        st.markdown(f"**Achado:** {s.achado}  \n**Área:** {s.area}")
+        st.markdown(f"**Achado:** {s.achado}")
     with col_undo:
         if s.history:
             if st.button("↩ Desfazer", use_container_width=True):
@@ -407,7 +407,7 @@ def tela_resultados():
                         with st.spinner("Recalculando cadeia..."):
                             try:
                                 s.chain, s.causa_raiz, s.recomendacao = regenerar_a_partir_de(
-                                    s.achado, s.area, s.chain[:i + 1], s.provider
+                                    s.achado, s.chain[:i + 1], s.provider
                                 )
                             except Exception as e:
                                 if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
@@ -429,7 +429,7 @@ def tela_resultados():
             if s.alternatives is None:
                 with st.spinner("Gerando sugestões..."):
                     try:
-                        s.alternatives = gerar_alternativas(s.achado, s.area, s.chain, i, s.provider)
+                        s.alternatives = gerar_alternativas(s.achado, s.chain, i, s.provider)
                     except Exception as e:
                         if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
                             st.error("Limite de requisições atingido. Aguarde alguns minutos e tente novamente.")
@@ -456,7 +456,7 @@ def tela_resultados():
                     with st.spinner("Recalculando cadeia..."):
                         try:
                             s.chain, s.causa_raiz, s.recomendacao = regenerar_a_partir_de(
-                                s.achado, s.area, s.chain[:i + 1], s.provider
+                                s.achado, s.chain[:i + 1], s.provider
                             )
                         except Exception as e:
                             if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
@@ -471,7 +471,7 @@ def tela_resultados():
                     with st.spinner("Gerando novas sugestões..."):
                         try:
                             s.alternatives = gerar_alternativas(
-                                s.achado, s.area, s.chain, i, s.provider, excluir=s.alternatives
+                                s.achado, s.chain, i, s.provider, excluir=s.alternatives
                             )
                         except Exception as e:
                             if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
@@ -503,7 +503,7 @@ def tela_resultados():
                         nova_chain = s.chain[:i + 1]
                         with st.spinner("Gerando conclusão..."):
                             try:
-                                causa, rec = gerar_conclusao(s.achado, s.area, nova_chain, s.provider)
+                                causa, rec = gerar_conclusao(s.achado, nova_chain, s.provider)
                             except Exception as e:
                                 if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
                                     st.error("Limite de requisições atingido. Aguarde alguns minutos e tente novamente.")
@@ -540,16 +540,11 @@ def tela_resultados():
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-st.set_page_config(page_title="5 Porquês Interativo", page_icon="🔎", layout="wide")
+st.set_page_config(page_title="Reunião de busca conjunta de soluções", page_icon="🔎", layout="wide")
 st.markdown(CSS, unsafe_allow_html=True)
 
-col_titulo, col_org = st.columns([8, 2])
-with col_titulo:
-    st.title("🔎 5 Porquês Interativo")
-with col_org:
-    pass
-
-st.caption("Ferramenta para auxílio da identificação da causa-raiz — versão para testes.")
+st.title("Reunião de busca conjunta de soluções")
+st.markdown("**Ferramenta:** Análise interativa de 5 porquês")
 
 _init()
 
