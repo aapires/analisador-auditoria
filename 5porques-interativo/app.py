@@ -13,6 +13,7 @@ Fluxo:
 import copy
 import os
 import re
+import anthropic
 from google import genai
 from google.genai import types
 import streamlit as st
@@ -20,8 +21,34 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
-MODEL = "gemini-2.0-flash"
+_anthropic_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+_gemini_client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+
+MODELOS = {
+    "Claude Haiku (Anthropic)": "claude",
+    "Gemini 2.0 Flash (Google)": "gemini",
+}
+
+
+def _chamar_modelo(provider: str, system: str, prompt: str, max_tokens: int) -> str:
+    if provider == "claude":
+        resp = _anthropic_client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=max_tokens,
+            system=system,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return resp.content[0].text
+    else:
+        resp = _gemini_client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=system,
+                max_output_tokens=max_tokens,
+            ),
+        )
+        return resp.text
 
 # ── Estilo ────────────────────────────────────────────────────────────────────
 
@@ -122,7 +149,7 @@ def _parsear_conclusao(texto):
     return causa, rec
 
 
-def gerar_cadeia_completa(achado, area):
+def gerar_cadeia_completa(achado, area, provider):
     prompt = f"""Área: {area}
 Achado: {achado}
 
@@ -143,15 +170,7 @@ P5_RESPOSTA: Porque [resposta — esta é a falha estrutural que é a causa raiz
 CAUSA_RAIZ: [descrição objetiva da falha estrutural identificada]
 RECOMENDACAO: [recomendação focada em eliminar a causa raiz estrutural]"""
 
-    resp = client.models.generate_content(
-        model=MODEL,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            system_instruction=SYSTEM_BASE,
-            max_output_tokens=8192,
-        ),
-    )
-    texto = resp.text
+    texto = _chamar_modelo(provider, SYSTEM_BASE, prompt, 8192)
     chain = []
     for n in range(1, 6):
         p, r = _parsear_passo(texto, n)
@@ -161,7 +180,7 @@ RECOMENDACAO: [recomendação focada em eliminar a causa raiz estrutural]"""
     return chain, causa, rec
 
 
-def gerar_conclusao(achado, area, chain):
+def gerar_conclusao(achado, area, chain, provider):
     """Gera causa raiz e recomendação para uma cadeia já definida."""
     ctx = _ctx(chain)
     prompt = f"""Área: {area}
@@ -175,18 +194,10 @@ Responda SOMENTE neste formato:
 CAUSA_RAIZ: [causa raiz com base no último passo da cadeia]
 RECOMENDACAO: [recomendação focada na causa raiz, dirigida à autoridade competente]"""
 
-    resp = client.models.generate_content(
-        model=MODEL,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            system_instruction=SYSTEM_BASE,
-            max_output_tokens=4096,
-        ),
-    )
-    return _parsear_conclusao(resp.text)
+    return _parsear_conclusao(_chamar_modelo(provider, SYSTEM_BASE, prompt, 4096))
 
 
-def gerar_alternativas(achado, area, chain, idx, excluir=None):
+def gerar_alternativas(achado, area, chain, idx, provider, excluir=None):
     pergunta = chain[idx]["pergunta"]
     ctx = _ctx(chain[:idx])
     excluir_txt = ""
@@ -207,17 +218,9 @@ ALT_1: Porque [resposta 1].
 ALT_2: Porque [resposta 2].
 ALT_3: Porque [resposta 3]."""
 
-    resp = client.models.generate_content(
-        model=MODEL,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            system_instruction=SYSTEM_BASE,
-            max_output_tokens=4096,
-        ),
-    )
     alts = []
     bloco = ""
-    for linha in resp.text.splitlines():
+    for linha in _chamar_modelo(provider, SYSTEM_BASE, prompt, 4096).splitlines():
         l = _strip_md(linha)
         m = re.match(r"ALT_\d\s*:\s*(.+)", l, re.IGNORECASE)
         if m:
@@ -231,7 +234,7 @@ ALT_3: Porque [resposta 3]."""
     return alts[:3]
 
 
-def regenerar_a_partir_de(achado, area, chain_confirmada):
+def regenerar_a_partir_de(achado, area, chain_confirmada, provider):
     """Recebe a cadeia confirmada (0..N com nova resposta em N) e regenera N+1..fim."""
     prox = len(chain_confirmada) + 1
     ctx = _ctx(chain_confirmada)
@@ -254,15 +257,7 @@ Continue a partir do passo {prox}. Use VAZIO nos passos restantes se a causa rai
 Responda SOMENTE neste formato:
 {chr(10).join(linhas_fmt)}"""
 
-    resp = client.models.generate_content(
-        model=MODEL,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            system_instruction=SYSTEM_BASE,
-            max_output_tokens=8192,
-        ),
-    )
-    texto = resp.text
+    texto = _chamar_modelo(provider, SYSTEM_BASE, prompt, 8192)
     new_steps = []
     for n in range(prox, 6):
         p, r = _parsear_passo(texto, n)
@@ -286,6 +281,7 @@ def _init():
         "editing_mode": None,   # "edit" | "suggestions"
         "alternatives": None,
         "history": [],
+        "provider": "claude",
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -319,6 +315,14 @@ def tela_input():
     st.markdown("Informe o achado de auditoria e a área para iniciar a análise.")
     achado = st.text_area("Achado de auditoria:", height=120, key="inp_achado")
     area = st.text_input("Área:", key="inp_area")
+
+    modelo_label = st.selectbox(
+        "Modelo de IA:",
+        list(MODELOS.keys()),
+        index=0,
+    )
+    provider = MODELOS[modelo_label]
+
     declaracao = st.checkbox("Declaro que esse achado não inclui dados com restrição de acesso.")
 
     if st.button("Analisar", type="primary"):
@@ -329,7 +333,7 @@ def tela_input():
         else:
             with st.spinner("Gerando análise dos 5 Porquês..."):
                 try:
-                    chain, causa, rec = gerar_cadeia_completa(achado.strip(), area.strip())
+                    chain, causa, rec = gerar_cadeia_completa(achado.strip(), area.strip(), provider)
                 except Exception as e:
                     if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
                         st.error("Limite de requisições atingido. Aguarde alguns minutos e tente novamente.")
@@ -347,6 +351,7 @@ def tela_input():
                 "editing_mode": None,
                 "alternatives": None,
                 "history": [],
+                "provider": provider,
             })
             st.rerun()
 
@@ -400,7 +405,7 @@ def tela_resultados():
                         with st.spinner("Recalculando cadeia..."):
                             try:
                                 s.chain, s.causa_raiz, s.recomendacao = regenerar_a_partir_de(
-                                    s.achado, s.area, s.chain[:i + 1]
+                                    s.achado, s.area, s.chain[:i + 1], s.provider
                                 )
                             except Exception as e:
                                 if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
@@ -422,7 +427,7 @@ def tela_resultados():
             if s.alternatives is None:
                 with st.spinner("Gerando sugestões..."):
                     try:
-                        s.alternatives = gerar_alternativas(s.achado, s.area, s.chain, i)
+                        s.alternatives = gerar_alternativas(s.achado, s.area, s.chain, i, s.provider)
                     except Exception as e:
                         if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
                             st.error("Limite de requisições atingido. Aguarde alguns minutos e tente novamente.")
@@ -449,7 +454,7 @@ def tela_resultados():
                     with st.spinner("Recalculando cadeia..."):
                         try:
                             s.chain, s.causa_raiz, s.recomendacao = regenerar_a_partir_de(
-                                s.achado, s.area, s.chain[:i + 1]
+                                s.achado, s.area, s.chain[:i + 1], s.provider
                             )
                         except Exception as e:
                             if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
@@ -464,7 +469,7 @@ def tela_resultados():
                     with st.spinner("Gerando novas sugestões..."):
                         try:
                             s.alternatives = gerar_alternativas(
-                                s.achado, s.area, s.chain, i, excluir=s.alternatives
+                                s.achado, s.area, s.chain, i, s.provider, excluir=s.alternatives
                             )
                         except Exception as e:
                             if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
@@ -496,7 +501,7 @@ def tela_resultados():
                         nova_chain = s.chain[:i + 1]
                         with st.spinner("Gerando conclusão..."):
                             try:
-                                causa, rec = gerar_conclusao(s.achado, s.area, nova_chain)
+                                causa, rec = gerar_conclusao(s.achado, s.area, nova_chain, s.provider)
                             except Exception as e:
                                 if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
                                     st.error("Limite de requisições atingido. Aguarde alguns minutos e tente novamente.")
