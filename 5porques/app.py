@@ -21,6 +21,7 @@ Critério fundamental da causa raiz:
 - A causa raiz DEVE ser uma falha estrutural em política, processo, sistema, competência ou cultura organizacional.
 - Ela precisa ter poder de sanar não apenas o achado analisado, mas outros achados similares — caso fosse corrigida.
 - Nunca identifique como causa raiz um sintoma, um evento pontual ou uma falha individual isolada.
+- A causa raiz é justamente a resposta ao último porque da cadeia estabelecida.
 - Pergunte-se: "Se corrigirmos isso, impediremos que problemas similares ocorram sistematicamente?" — só então é causa raiz.
 
 Regras da cadeia de porquês:
