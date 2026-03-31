@@ -1,8 +1,8 @@
 """
-5 Porquês Interativo (local) — roda com Ollama (Gemma 3 4B ou outro modelo local).
+5 Porquês Interativo (local) — roda com Ollama.
 
 Fluxo:
-  1. Usuário informa achado + área → gera cadeia completa.
+  1. Usuário informa achado → gera cadeia completa.
   2. Cada resposta tem 3 botões: Causa Raiz, Editar, Sugestões.
   3. Causa Raiz: trunca a cadeia no passo atual e regera conclusão.
   4. Editar: caixa de texto livre para digitar a resposta, recalcula cadeia.
@@ -15,7 +15,7 @@ import re
 import ollama
 import streamlit as st
 
-MODEL = "gemma3:4b"
+MODEL_PADRAO = "gemma3:4b"
 
 # ── Estilo ────────────────────────────────────────────────────────────────────
 
@@ -66,19 +66,33 @@ CSS = """
 # ── LLM ───────────────────────────────────────────────────────────────────────
 
 SYSTEM_BASE = """\
-Você é um auditor interno sênior especialista em análise de causa raiz pela técnica dos 5 Porquês.
+Você é um auditor interno sênior especialista em análise de causa raiz.
+Sua tarefa é aplicar a técnica dos 5 Porquês a achados de auditoria.
 
-Regras:
-- A causa raiz é geralmente uma falha de processo, controle, gestão ou decisão — não um sintoma.
-- A recomendação deve atacar diretamente a causa raiz, dirigida à autoridade competente.
-- Pare antes do 5º passo se a causa raiz já for identificada; use VAZIO nos passos restantes."""
+Critério fundamental da causa raiz:
+- A causa raiz DEVE ser uma falha estrutural em política, processo, sistema, competência ou cultura organizacional.
+- Ela precisa ter poder de sanar não apenas o achado analisado, mas outros achados similares — caso fosse corrigida.
+- Nunca identifique como causa raiz um sintoma, um evento pontual ou uma falha individual isolada.
+- A causa raiz é justamente a resposta ao último porque da cadeia estabelecida.
+- Pergunte-se: "Se corrigirmos isso, impediremos que problemas similares ocorram sistematicamente?" — só então é causa raiz.
+- A recomendação deve atacar diretamente a causa raiz estrutural, dirigida à autoridade competente."""
 
 
-def _llm(prompt):
+def _listar_modelos():
+    """Retorna lista de nomes de modelos disponíveis no Ollama."""
+    try:
+        resp = ollama.list()
+        modelos = [m.model for m in resp.models]
+        return modelos if modelos else [MODEL_PADRAO]
+    except Exception:
+        return [MODEL_PADRAO]
+
+
+def _chamar_modelo(model: str, system: str, prompt: str) -> str:
     resp = ollama.chat(
-        model=MODEL,
+        model=model,
         messages=[
-            {"role": "system", "content": SYSTEM_BASE},
+            {"role": "system", "content": system},
             {"role": "user", "content": prompt},
         ],
     )
@@ -96,21 +110,17 @@ def _ctx(chain):
     )
 
 
-def _limpar_vazio(v):
-    """Remove sufixos '— VAZIO' ou '- VAZIO' que o modelo às vezes adiciona."""
-    v = re.sub(r"\s*[—\-]+\s*VAZIO\s*$", "", v, flags=re.IGNORECASE).strip()
-    return "" if v.upper().startswith("VAZIO") else v
-
-
 def _parsear_passo(texto, n):
     p = r = ""
     for linha in texto.splitlines():
         l = _strip_md(linha)
         lu = l.upper()
         if lu.startswith(f"P{n}_PERGUNTA:"):
-            p = _limpar_vazio(l[len(f"P{n}_PERGUNTA:"):].strip())
+            v = l[len(f"P{n}_PERGUNTA:"):].strip()
+            p = "" if v.upper().startswith("VAZIO") else v
         elif lu.startswith(f"P{n}_RESPOSTA:"):
-            r = _limpar_vazio(l[len(f"P{n}_RESPOSTA:"):].strip())
+            v = l[len(f"P{n}_RESPOSTA:"):].strip()
+            r = "" if v.upper().startswith("VAZIO") else v
     return p, r
 
 
@@ -128,25 +138,27 @@ def _parsear_conclusao(texto):
     return causa, rec
 
 
-def gerar_cadeia_completa(achado, area):
-    prompt = f"""Área: {area}
-Achado: {achado}
+def gerar_cadeia_completa(achado, model):
+    prompt = f"""Achado: {achado}
 
-Aplique a técnica dos 5 Porquês. Responda SOMENTE neste formato exato, sem texto adicional, sem markdown:
+REGRA OBRIGATÓRIA: Preencha todos os 5 porquês completos (P1 até P5). Nenhum campo pode conter VAZIO.
+Aprofunde cada resposta até atingir o 5º nível, chegando a uma falha estrutural na causa raiz.
+
+Responda SOMENTE neste formato, sem texto adicional:
 P1_PERGUNTA: Por quê [pergunta derivada do achado]?
 P1_RESPOSTA: Porque [resposta].
 P2_PERGUNTA: Por quê [pergunta baseada em P1_RESPOSTA]?
 P2_RESPOSTA: Porque [resposta].
 P3_PERGUNTA: Por quê [pergunta baseada em P2_RESPOSTA]?
 P3_RESPOSTA: Porque [resposta].
-P4_PERGUNTA: Por quê [...]? — ou VAZIO se causa raiz já identificada
-P4_RESPOSTA: Porque [...]. — ou VAZIO
-P5_PERGUNTA: Por quê [...]? — ou VAZIO
-P5_RESPOSTA: Porque [...]. — ou VAZIO
-CAUSA_RAIZ: [causa raiz identificada]
-RECOMENDACAO: [recomendação focada na causa raiz]"""
+P4_PERGUNTA: Por quê [pergunta baseada em P3_RESPOSTA]?
+P4_RESPOSTA: Porque [resposta].
+P5_PERGUNTA: Por quê [pergunta baseada em P4_RESPOSTA]?
+P5_RESPOSTA: Porque [resposta — esta é a falha estrutural que é a causa raiz].
+CAUSA_RAIZ: [descrição objetiva da falha estrutural identificada]
+RECOMENDACAO: [recomendação focada em eliminar a causa raiz estrutural]"""
 
-    texto = _llm(prompt)
+    texto = _chamar_modelo(model, SYSTEM_BASE, prompt)
     chain = []
     for n in range(1, 6):
         p, r = _parsear_passo(texto, n)
@@ -156,23 +168,22 @@ RECOMENDACAO: [recomendação focada na causa raiz]"""
     return chain, causa, rec
 
 
-def gerar_conclusao(achado, area, chain):
+def gerar_conclusao(achado, chain, model):
     ctx = _ctx(chain)
-    prompt = f"""Área: {area}
-Achado: {achado}
+    prompt = f"""Achado: {achado}
 
 Cadeia dos Porquês confirmada:
 {ctx}
 
 O último passo representa a causa raiz identificada. Gere a conclusão.
-Responda SOMENTE neste formato exato, sem markdown:
+Responda SOMENTE neste formato:
 CAUSA_RAIZ: [causa raiz com base no último passo da cadeia]
 RECOMENDACAO: [recomendação focada na causa raiz, dirigida à autoridade competente]"""
 
-    return _parsear_conclusao(_llm(prompt))
+    return _parsear_conclusao(_chamar_modelo(model, SYSTEM_BASE, prompt))
 
 
-def gerar_alternativas(achado, area, chain, idx, excluir=None):
+def gerar_alternativas(achado, chain, idx, model, excluir=None):
     pergunta = chain[idx]["pergunta"]
     ctx = _ctx(chain[:idx])
     excluir_txt = ""
@@ -180,28 +191,35 @@ def gerar_alternativas(achado, area, chain, idx, excluir=None):
         excluir_txt = "\n\nNÃO repita estas respostas já apresentadas:\n" + "\n".join(
             f"- {a}" for a in excluir
         )
-    prompt = f"""Área: {area}
-Achado: {achado}
+    prompt = f"""Achado: {achado}
 {"Cadeia confirmada:\n" + ctx if ctx else ""}
 
 Pergunta atual: {pergunta}
 
-Gere EXATAMENTE 3 respostas alternativas plausíveis, cada uma representando uma causa diferente.{excluir_txt}
-Responda SOMENTE neste formato exato, sem markdown, sem numeração adicional:
+Gere EXATAMENTE 3 respostas alternativas plausíveis, cada uma representando uma causa diferente.
+Cada resposta deve ser completa e não pode ser cortada.{excluir_txt}
+Responda SOMENTE neste formato, sem texto adicional:
 ALT_1: Porque [resposta 1].
 ALT_2: Porque [resposta 2].
 ALT_3: Porque [resposta 3]."""
 
     alts = []
-    for linha in _llm(prompt).splitlines():
+    bloco = ""
+    for linha in _chamar_modelo(model, SYSTEM_BASE, prompt).splitlines():
         l = _strip_md(linha)
-        m = re.search(r"ALT_\d\s*:\s*(.+)", l, re.IGNORECASE)
+        m = re.match(r"ALT_\d\s*:\s*(.+)", l, re.IGNORECASE)
         if m:
-            alts.append(m.group(1).strip())
+            if bloco:
+                alts.append(bloco.strip())
+            bloco = m.group(1).strip()
+        elif bloco and l:
+            bloco += " " + l
+    if bloco:
+        alts.append(bloco.strip())
     return alts[:3]
 
 
-def regenerar_a_partir_de(achado, area, chain_confirmada):
+def regenerar_a_partir_de(achado, chain_confirmada, model):
     prox = len(chain_confirmada) + 1
     ctx = _ctx(chain_confirmada)
 
@@ -213,17 +231,16 @@ def regenerar_a_partir_de(achado, area, chain_confirmada):
         ]
     linhas_fmt += ["CAUSA_RAIZ: [...]", "RECOMENDACAO: [...]"]
 
-    prompt = f"""Área: {area}
-Achado: {achado}
+    prompt = f"""Achado: {achado}
 
 Cadeia já confirmada:
 {ctx}
 
 Continue a partir do passo {prox}. Use VAZIO nos passos restantes se a causa raiz já foi identificada.
-Responda SOMENTE neste formato exato, sem markdown:
+Responda SOMENTE neste formato:
 {chr(10).join(linhas_fmt)}"""
 
-    texto = _llm(prompt)
+    texto = _chamar_modelo(model, SYSTEM_BASE, prompt)
     new_steps = []
     for n in range(prox, 6):
         p, r = _parsear_passo(texto, n)
@@ -239,7 +256,6 @@ def _init():
     defaults = {
         "phase": "input",
         "achado": "",
-        "area": "",
         "chain": [],
         "causa_raiz": "",
         "recomendacao": "",
@@ -247,6 +263,7 @@ def _init():
         "editing_mode": None,
         "alternatives": None,
         "history": [],
+        "model": MODEL_PADRAO,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -254,7 +271,7 @@ def _init():
 
 
 def _reset():
-    for k in ["phase", "achado", "area", "chain", "causa_raiz", "recomendacao",
+    for k in ["phase", "achado", "chain", "causa_raiz", "recomendacao",
               "editing_index", "editing_mode", "alternatives", "history"]:
         if k in st.session_state:
             del st.session_state[k]
@@ -277,40 +294,60 @@ def _salvar_historico(s):
 # ── Telas ─────────────────────────────────────────────────────────────────────
 
 def tela_input():
-    st.markdown("Informe o achado de auditoria e a área para iniciar a análise.")
-    achado = st.text_area("Achado de auditoria:", height=120, key="inp_achado")
-    area = st.text_input("Área:", key="inp_area")
+    st.markdown("### Descreva o achado de auditoria")
+    achado = st.text_area(
+        "Achado:",
+        height=160,
+        key="inp_achado",
+        placeholder="Descreva o achado com o máximo de contexto possível...",
+        label_visibility="collapsed",
+    )
 
-    if st.button("Analisar", type="primary"):
-        if achado.strip() and area.strip():
-            try:
-                with st.spinner(f"Gerando análise com {MODEL} (local)..."):
-                    chain, causa, rec = gerar_cadeia_completa(achado.strip(), area.strip())
-                st.session_state.update({
-                    "phase": "results",
-                    "achado": achado.strip(),
-                    "area": area.strip(),
-                    "chain": chain,
-                    "causa_raiz": causa,
-                    "recomendacao": rec,
-                    "editing_index": None,
-                    "editing_mode": None,
-                    "alternatives": None,
-                    "history": [],
-                })
-                st.rerun()
-            except Exception as e:
-                st.error(f"Erro ao conectar ao Ollama: {e}\n\nVerifique se o Ollama está rodando e o modelo `{MODEL}` está instalado.")
+    declaracao = st.checkbox("Declaro que esse achado não inclui dados com restrição de acesso.")
+
+    with st.expander("⚙️ Configurações"):
+        modelos_disponiveis = _listar_modelos()
+        idx_padrao = modelos_disponiveis.index(MODEL_PADRAO) if MODEL_PADRAO in modelos_disponiveis else 0
+        model = st.selectbox(
+            "Modelo local (Ollama):",
+            modelos_disponiveis,
+            index=idx_padrao,
+        )
+
+    if st.button("Iniciar análise", type="primary"):
+        if not declaracao:
+            st.warning("É necessário confirmar a declaração antes de iniciar a análise.")
+        elif not achado.strip():
+            st.warning("Descreva o achado antes de continuar.")
         else:
-            st.warning("Preencha o achado e a área.")
+            with st.spinner("Gerando análise dos 5 Porquês..."):
+                try:
+                    chain, causa, rec = gerar_cadeia_completa(achado.strip(), model)
+                except Exception as e:
+                    st.error(f"Erro ao conectar ao Ollama: {e}\n\nVerifique se o Ollama está rodando e o modelo `{model}` está instalado.")
+                    st.stop()
+            st.session_state.update({
+                "phase": "results",
+                "achado": achado.strip(),
+                "chain": chain,
+                "causa_raiz": causa,
+                "recomendacao": rec,
+                "editing_index": None,
+                "editing_mode": None,
+                "alternatives": None,
+                "history": [],
+                "model": model,
+            })
+            st.rerun()
 
 
 def tela_resultados():
     s = st.session_state
 
+    # ── Cabeçalho ──
     col_info, col_undo, col_new = st.columns([7, 1.5, 1.5])
     with col_info:
-        st.markdown(f"**Achado:** {s.achado}  \n**Área:** {s.area}")
+        st.markdown(f"**Achado:** {s.achado}")
     with col_undo:
         if s.history:
             if st.button("↩ Desfazer", use_container_width=True):
@@ -327,10 +364,12 @@ def tela_resultados():
 
     st.divider()
 
+    # ── Cadeia de porquês ──
     for i, step in enumerate(s.chain):
         editing_this = s.editing_index == i
 
         if editing_this and s.editing_mode == "edit":
+            # ── Modo: editar texto livre ──
             st.markdown(
                 f'<div class="step-card-editing"><strong>{i+1}. {step["pergunta"]}</strong></div>',
                 unsafe_allow_html=True,
@@ -349,9 +388,13 @@ def tela_resultados():
                         _salvar_historico(s)
                         s.chain[i]["resposta"] = nova
                         with st.spinner("Recalculando cadeia..."):
-                            s.chain, s.causa_raiz, s.recomendacao = regenerar_a_partir_de(
-                                s.achado, s.area, s.chain[:i + 1]
-                            )
+                            try:
+                                s.chain, s.causa_raiz, s.recomendacao = regenerar_a_partir_de(
+                                    s.achado, s.chain[:i + 1], s.model
+                                )
+                            except Exception as e:
+                                st.error(f"Erro ao recalcular cadeia: {e}")
+                                st.stop()
                         _cancelar_edicao(s)
                         st.rerun()
                     else:
@@ -362,9 +405,15 @@ def tela_resultados():
                     st.rerun()
 
         elif editing_this and s.editing_mode == "suggestions":
+            # ── Modo: sugestões da IA ──
             if s.alternatives is None:
                 with st.spinner("Gerando sugestões..."):
-                    s.alternatives = gerar_alternativas(s.achado, s.area, s.chain, i)
+                    try:
+                        s.alternatives = gerar_alternativas(s.achado, s.chain, i, s.model)
+                    except Exception as e:
+                        st.error(f"Erro ao gerar sugestões: {e}")
+                        _cancelar_edicao(s)
+                        st.stop()
                 st.rerun()
 
             st.markdown(
@@ -382,17 +431,25 @@ def tela_resultados():
                     _salvar_historico(s)
                     s.chain[i]["resposta"] = choice
                     with st.spinner("Recalculando cadeia..."):
-                        s.chain, s.causa_raiz, s.recomendacao = regenerar_a_partir_de(
-                            s.achado, s.area, s.chain[:i + 1]
-                        )
+                        try:
+                            s.chain, s.causa_raiz, s.recomendacao = regenerar_a_partir_de(
+                                s.achado, s.chain[:i + 1], s.model
+                            )
+                        except Exception as e:
+                            st.error(f"Erro ao recalcular cadeia: {e}")
+                            st.stop()
                     _cancelar_edicao(s)
                     st.rerun()
             with col_atualizar:
                 if st.button("🔄 Atualizar sugestões", key=f"refresh_{i}"):
                     with st.spinner("Gerando novas sugestões..."):
-                        s.alternatives = gerar_alternativas(
-                            s.achado, s.area, s.chain, i, excluir=s.alternatives
-                        )
+                        try:
+                            s.alternatives = gerar_alternativas(
+                                s.achado, s.chain, i, s.model, excluir=s.alternatives
+                            )
+                        except Exception as e:
+                            st.error(f"Erro ao gerar sugestões: {e}")
+                            st.stop()
                     st.rerun()
             with col_cancelar:
                 if st.button("Cancelar", key=f"cancel_sug_{i}"):
@@ -400,6 +457,7 @@ def tela_resultados():
                     st.rerun()
 
         else:
+            # ── Estado normal: exibe card + 3 botões ──
             col_step, col_cr, col_ed, col_sg = st.columns([9, 1, 1, 1])
             with col_step:
                 st.markdown(
@@ -415,7 +473,11 @@ def tela_resultados():
                         _salvar_historico(s)
                         nova_chain = s.chain[:i + 1]
                         with st.spinner("Gerando conclusão..."):
-                            causa, rec = gerar_conclusao(s.achado, s.area, nova_chain)
+                            try:
+                                causa, rec = gerar_conclusao(s.achado, nova_chain, s.model)
+                            except Exception as e:
+                                st.error(f"Erro ao gerar conclusão: {e}")
+                                st.stop()
                         s.chain = nova_chain
                         s.causa_raiz = causa
                         s.recomendacao = rec
@@ -432,6 +494,7 @@ def tela_resultados():
                         s.alternatives = None
                         st.rerun()
 
+    # ── Conclusão ──
     st.markdown(
         f'<div class="conclusao-card">'
         f'<strong>🎯 Causa Raiz</strong><br>{s.causa_raiz}'
@@ -448,8 +511,8 @@ def tela_resultados():
 st.set_page_config(page_title="5 Porquês (local)", page_icon="🔎", layout="wide")
 st.markdown(CSS, unsafe_allow_html=True)
 
-st.title("🔎 5 Porquês Interativo")
-st.caption(f"Modelo local: `{MODEL}` via Ollama — versão para testes.")
+st.title("5 Porquês Interativo")
+st.markdown("**Ferramenta:** Análise interativa de 5 porquês — modelo local via Ollama")
 
 _init()
 

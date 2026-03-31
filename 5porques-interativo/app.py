@@ -16,6 +16,7 @@ import re
 import anthropic
 from google import genai
 from google.genai import types
+from openai import OpenAI
 import streamlit as st
 from dotenv import load_dotenv
 
@@ -23,25 +24,29 @@ load_dotenv()
 
 _anthropic_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 _gemini_client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+_openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 MODELOS = {
-    "Claude Haiku (Anthropic)": "claude",
-    "Gemini 2.0 Flash (Google)": "gemini",
+    "Claude Haiku (Anthropic)": ("claude", "claude-haiku-4-5-20251001"),
+    "Claude Sonnet 4.6 (Anthropic)": ("claude", "claude-sonnet-4-6"),
+    "Gemini 2.0 Flash (Google)": ("gemini", "gemini-2.0-flash"),
+    "GPT-5.4 (OpenAI)": ("openai", "gpt-5.4"),
+    "GPT-5.4 Mini (OpenAI)": ("openai", "gpt-5.4-mini"),
 }
 
 
-def _chamar_modelo(provider: str, system: str, prompt: str, max_tokens: int) -> str:
+def _chamar_modelo(provider: str, model_id: str, system: str, prompt: str, max_tokens: int) -> str:
     if provider == "claude":
         resp = _anthropic_client.messages.create(
-            model="claude-haiku-4-5-20251001",
+            model=model_id,
             max_tokens=max_tokens,
             system=system,
             messages=[{"role": "user", "content": prompt}],
         )
         return resp.content[0].text
-    else:
+    elif provider == "gemini":
         resp = _gemini_client.models.generate_content(
-            model="gemini-2.0-flash",
+            model=model_id,
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=system,
@@ -49,6 +54,16 @@ def _chamar_modelo(provider: str, system: str, prompt: str, max_tokens: int) -> 
             ),
         )
         return resp.text
+    else:
+        resp = _openai_client.chat.completions.create(
+            model=model_id,
+            max_tokens=max_tokens,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": prompt},
+            ],
+        )
+        return resp.choices[0].message.content
 
 # ── Estilo ────────────────────────────────────────────────────────────────────
 
@@ -171,7 +186,7 @@ P5_RESPOSTA: Porque [resposta — esta é a falha estrutural que é a causa raiz
 CAUSA_RAIZ: [descrição objetiva da falha estrutural identificada]
 RECOMENDACAO: [recomendação focada em eliminar a causa raiz estrutural]"""
 
-    texto = _chamar_modelo(provider, SYSTEM_BASE, prompt, 8192)
+    texto = _chamar_modelo(*provider, SYSTEM_BASE, prompt, 8192)
     chain = []
     for n in range(1, 6):
         p, r = _parsear_passo(texto, n)
@@ -194,7 +209,7 @@ Responda SOMENTE neste formato:
 CAUSA_RAIZ: [causa raiz com base no último passo da cadeia]
 RECOMENDACAO: [recomendação focada na causa raiz, dirigida à autoridade competente]"""
 
-    return _parsear_conclusao(_chamar_modelo(provider, SYSTEM_BASE, prompt, 4096))
+    return _parsear_conclusao(_chamar_modelo(*provider, SYSTEM_BASE, prompt, 4096))
 
 
 def gerar_alternativas(achado, chain, idx, provider, excluir=None):
@@ -219,7 +234,7 @@ ALT_3: Porque [resposta 3]."""
 
     alts = []
     bloco = ""
-    for linha in _chamar_modelo(provider, SYSTEM_BASE, prompt, 4096).splitlines():
+    for linha in _chamar_modelo(*provider, SYSTEM_BASE, prompt, 4096).splitlines():
         l = _strip_md(linha)
         m = re.match(r"ALT_\d\s*:\s*(.+)", l, re.IGNORECASE)
         if m:
@@ -255,7 +270,7 @@ Continue a partir do passo {prox}. Use VAZIO nos passos restantes se a causa rai
 Responda SOMENTE neste formato:
 {chr(10).join(linhas_fmt)}"""
 
-    texto = _chamar_modelo(provider, SYSTEM_BASE, prompt, 8192)
+    texto = _chamar_modelo(*provider, SYSTEM_BASE, prompt, 8192)
     new_steps = []
     for n in range(prox, 6):
         p, r = _parsear_passo(texto, n)
@@ -278,7 +293,7 @@ def _init():
         "editing_mode": None,   # "edit" | "suggestions"
         "alternatives": None,
         "history": [],
-        "provider": "claude",
+        "provider": ("claude", "claude-haiku-4-5-20251001"),
     }
     for k, v in defaults.items():
         if k not in st.session_state:
