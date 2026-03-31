@@ -57,7 +57,7 @@ def _chamar_modelo(provider: str, model_id: str, system: str, prompt: str, max_t
     else:
         resp = _openai_client.chat.completions.create(
             model=model_id,
-            max_tokens=max_tokens,
+            max_completion_tokens=max_tokens,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": prompt},
