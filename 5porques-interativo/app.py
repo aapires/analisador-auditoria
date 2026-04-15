@@ -28,7 +28,6 @@ _openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 MODELOS = {
     "Gemini 2.5 Flash (Google)": ("gemini", "gemini-2.5-flash"),
-    "GPT-4o (OpenAI)": ("openai", "gpt-4o"),
 }
 
 
