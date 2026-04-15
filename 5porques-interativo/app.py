@@ -27,10 +27,7 @@ _gemini_client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
 _openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 MODELOS = {
-    "Claude Haiku (Anthropic)": ("claude", "claude-haiku-4-5-20251001"),
-    "Claude Sonnet 4.6 (Anthropic)": ("claude", "claude-sonnet-4-6"),
     "Gemini 2.0 Flash (Google)": ("gemini", "gemini-2.0-flash"),
-    "GPT-5.4 (OpenAI)": ("openai", "gpt-5.4"),
     "GPT-5.4 Mini (OpenAI)": ("openai", "gpt-5.4-mini"),
 }
 
