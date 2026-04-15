@@ -27,8 +27,8 @@ _gemini_client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
 _openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 MODELOS = {
-    "Gemini 2.0 Flash (Google)": ("gemini", "gemini-2.0-flash"),
-    "GPT-4 (OpenAI)": ("openai", "gpt-4"),
+    "Gemini 2.5 Flash (Google)": ("gemini", "gemini-2.5-flash"),
+    "GPT-4o (OpenAI)": ("openai", "gpt-4o"),
 }
 
 
